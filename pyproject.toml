@@ -1,0 +1,22 @@
+[project]
+name = "isaac-usd-to-mjcf"
+version = "0.1.0"
+description = "Convert Isaac Sim USD assets to MuJoCo MJCF, and check collider transforms against the visual meshes."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "usd-core>=25.5",
+]
+
+[project.optional-dependencies]
+compile = ["mujoco"]
+
+[project.scripts]
+isaac-usd-to-mjcf = "isaac_usd_to_mjcf.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
