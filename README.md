@@ -1,57 +1,51 @@
 # palatial-sim-file-converters
 
-Convert one simulation file to another. USD, MJCF, and URDF read and write in every direction. USD, MJCF, and URDF also write a GLB plus `manifest.json` containing the rigid bodies, inertias, joints, and collider metadata.
+Convert one simulation file to another.
 
 ```sh
-pip install -e ".[dev]"
+pip install "palatial-sim-file-converters @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.0"
 sim-convert asset.usd asset.xml
-sim-convert asset.xml asset.usda
-sim-convert asset.urdf asset.xml
-sim-convert asset.usd asset.urdf
-sim-convert asset.usd asset.glb
 ```
 
-`asset.glb` is accompanied by `manifest.json` in the same directory. MJCF mesh files are written to `meshes/` next to the XML. URDF meshes are written the same way.
+The output extension chooses the format.
 
-`isaac-usd-to-mjcf check asset.usd` still reports collider problems on an Isaac USD stage. `isaac-usd-to-mjcf convert asset.usd -o out/` writes the MJCF bundle and `collider_report.json`.
+```sh
+sim-convert asset.usd asset.xml      # USD to MJCF
+sim-convert asset.xml asset.usda     # MJCF to USD
+sim-convert asset.urdf asset.xml     # URDF to MJCF
+sim-convert asset.usd asset.urdf     # USD to URDF
+sim-convert asset.xml asset.urdf     # MJCF to URDF
+sim-convert asset.urdf asset.usda    # URDF to USD
+sim-convert asset.usd asset.glb      # USD to GLB
+```
 
-Install the `dev` extra to run the tests (`pytest`). The `compile` extra, included by `dev`, lets `--compile` load an MJCF result in MuJoCo.
+You can start from `.usd`, `.usda`, `.usdc`, `.xml`, `.mjcf`, or `.urdf`. You can write any of those, plus `.glb`.
 
-Isaac stores many colliders as a unit cube or a convex fragment. The size and orientation are on `xformOp:scale` and `xformOp:orient`, including scales inherited from a parent `Colliders` prim. The USD reader bakes that transform into the collider and reports when it does not match the visual mesh. `isaac-usd-to-mjcf convert` writes `model.xml`, `meshes/*.obj`, and `collider_report.json`.
+## What you get
 
-## What is checked
+- An MJCF or URDF file, with meshes in a `meshes/` folder next to it.
+- A `.glb`, plus `manifest.json` in the same folder. The manifest holds bodies, mass, inertia, joints, and colliders. The GLB holds the visible meshes.
+- A `.usd`, `.usda`, or `.usdc` scene in meters, kilograms, and Z-up.
 
-- **ancestor scale** — a parent prim scales the collider (the golf-ball `1.8` and football `1.53` cases). The MJCF still uses that scale, because that is the shape PhysX simulates.
-- **bounds mismatch** — the dedicated collider's world bounds and the visual mesh disagree by more than 25% on any axis.
-- **unit cube scale** — the mesh is the cube from -0.5 to 0.5, so dropping the scale op drops the shape.
-- **stacked or negative scale** — more than one non-unit scale, or a mirror.
-- **double collision** — the visual mesh and a dedicated collider are both enabled.
-- **PhysX sdf** — exported as a MuJoCo `sdf` geom of the same triangle mesh. It is not the cooked PhysX SDF.
-- **PhysX convexDecomposition** — the stage does not contain the cooked hulls. MJCF uses one convex hull of the source mesh.
-- **missing or degenerate collider** — a rigid body with nothing to collide, or an extent below 0.01 mm.
+Add `--compile` to load an MJCF result in MuJoCo. That needs the `compile` extra:
 
-## Shape and joint mapping
+```sh
+pip install "palatial-sim-file-converters[compile] @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.0"
+sim-convert asset.usd asset.xml --compile
+```
 
-| USD | MJCF |
-| --- | --- |
-| Sphere, uniform scale | `sphere` |
-| Sphere, non-uniform scale | `ellipsoid` |
-| Cube | `box` (half the edge, times scale) |
-| Capsule or cylinder, uniform radius | analytic `capsule` or `cylinder` |
-| Capsule or cylinder, stretched radius | generated mesh, then the convex hull |
-| Cone | generated convex mesh (MuJoCo has no cone) |
-| Plane | infinite `plane`; the USD axis becomes +Z |
-| `convexHull` mesh | `mesh` (MuJoCo convexifies it) |
-| `none` or PhysX `sdf` | MuJoCo `sdf` of the same triangles |
-| `convexDecomposition`, `meshSimplification` | one convex hull, with a warning |
-| `boundingCube`, `boundingSphere` | generated box or containing sphere |
-| Fixed joint | nested body, no joint |
-| Revolute, prismatic | `hinge`, `slide` |
-| Spherical | `ball`; the smaller cone angle, from 0 |
-| Distance | spatial tendon between sites, not a parent link |
-| Generic joint | locked axes omitted; one free axis is a hinge or slide; three free rotations are a ball; mixed axes are stacked joints |
-| Filtered pairs, or `collisionEnabled = false` | `contact/exclude` |
+## Check an Isaac asset
 
-Mass, center of mass, and principal inertia are carried over when the authored values are finite. A missing center of mass or a zero principal-axes quaternion is left at the body origin rather than written as NaN. Revolute and spherical limits and drive targets are converted from degrees to radians. Scene gravity is used only when its magnitude is authored.
+```sh
+isaac-usd-to-mjcf check asset.usd
+```
 
-MJCF and URDF use the same scene. MJCF angles are read in the compiler's unit and stored as radians. URDF revolute limits are degrees. A URDF ball joint is three revolute joints, a plane is a thin box, and a distance tendon is omitted, each with a warning. GLB stores the render meshes; the physics fields live in `manifest.json`.
+This prints collider warnings. It does not write a file. `isaac-usd-to-mjcf convert asset.usd -o out/` writes `model.xml`, `meshes/`, and `collider_report.json`.
+
+## Good to know
+
+- `.xml` means MJCF.
+- A mesh collider becomes a MuJoCo convex hull. An `sdf` collider, or a triangle mesh with no approximation, becomes a MuJoCo SDF of those triangles.
+- A sphere, box, capsule, or cylinder stays that shape when the scale is uniform.
+- URDF has no ball joint, plane, distance joint, or SDF. Those become a close substitute, and the tool prints a warning.
+- GLB is an output only. It cannot be the input file.
