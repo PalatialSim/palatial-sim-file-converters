@@ -8,12 +8,18 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 
-from isaac_usd_to_mjcf.model import Asset, Body, Collider, Joint
-from isaac_usd_to_mjcf.xform import invert_rigid, matrix_to_quat
+from palatial_sim_file_converters.model import Asset, Body, Collider, Joint
+from palatial_sim_file_converters.xform import invert_rigid, matrix_to_quat
 
 def export_mjcf(asset: Asset, output: str | Path) -> Path:
     output = Path(output)
-    mesh_dir = output / "meshes"
+    if output.suffix.lower() in {".xml", ".mjcf"}:
+        directory = output.parent
+        xml_path = output
+    else:
+        directory = output
+        xml_path = directory / "model.xml"
+    mesh_dir = directory / "meshes"
     mesh_dir.mkdir(parents=True, exist_ok=True)
     root = ET.Element("mujoco", {"model": asset.name})
     ET.SubElement(root, "compiler", {"angle": "radian", "autolimits": "true"})
@@ -63,10 +69,10 @@ def export_mjcf(asset: Asset, output: str | Path) -> Path:
         for body_a, body_b in excludes:
             ET.SubElement(contact, "exclude", {"body1": body_a, "body2": body_b})
 
-    xml_path = output / "model.xml"
     ET.indent(root, space="  ")
+    xml_path.parent.mkdir(parents=True, exist_ok=True)
     xml_path.write_text(ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
-    _write_report(asset, output)
+    _write_report(asset, directory)
     return xml_path
 
 
@@ -211,20 +217,25 @@ def _add_geoms(body, source: Body, asset_node, mesh_dir: Path, meshes: dict[int,
     has_visual = bool(source.visuals)
     density = {"density": "0"} if source.mass is not None else {}
     for visual in source.visuals:
-        name = _mesh_asset(visual.local_points, visual.faces, visual.path, asset_node, mesh_dir, meshes)
-        ET.SubElement(
-            body,
-            "geom",
-            {
-                "name": f"{source.name}_{_leaf(visual.path)}_visual",
-                "type": "mesh",
-                "mesh": name,
-                "contype": "0",
-                "conaffinity": "0",
-                "group": "2",
-                **density,
-            },
-        )
+        attrs = {
+            "name": f"{source.name}_{_leaf(visual.path)}_visual",
+            "contype": "0",
+            "conaffinity": "0",
+            "group": "2",
+            **density,
+        }
+        if visual.geom_type not in {None, "mesh"} and visual.primitive_size is not None:
+            attrs["type"] = visual.geom_type
+            attrs["pos"] = _format(visual.primitive_pos or (0.0, 0.0, 0.0))
+            attrs["quat"] = _format(visual.primitive_quat or (1.0, 0.0, 0.0, 0.0))
+            attrs["size"] = _format(visual.primitive_size)
+        elif visual.local_points is not None:
+            name = _mesh_asset(visual.local_points, visual.faces, visual.path, asset_node, mesh_dir, meshes)
+            attrs["type"] = "mesh"
+            attrs["mesh"] = name
+        else:
+            continue
+        ET.SubElement(body, "geom", attrs)
     for index, collider in enumerate(source.colliders):
         _add_collider(body, source, collider, index, has_visual, density, asset_node, mesh_dir, meshes)
 

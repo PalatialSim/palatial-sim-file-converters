@@ -129,6 +129,54 @@ def capsule_mesh(
     return coordinates, np.array(faces, dtype=np.int32)
 
 
+def box_mesh(half) -> tuple[np.ndarray, np.ndarray]:
+    """Box from its half extents. The box is centered on the origin."""
+    hx, hy, hz = (float(value) for value in half)
+    points = np.array(
+        [[x, y, z] for x in (-hx, hx) for y in (-hy, hy) for z in (-hz, hz)],
+        dtype=np.float64,
+    )
+    faces = np.array(
+        [
+            (0, 1, 3), (0, 3, 2),
+            (4, 6, 7), (4, 7, 5),
+            (0, 4, 5), (0, 5, 1),
+            (2, 3, 7), (2, 7, 6),
+            (0, 2, 6), (0, 6, 4),
+            (1, 5, 7), (1, 7, 3),
+        ],
+        dtype=np.int32,
+    )
+    return points, faces
+
+
+def sphere_mesh(radius: float, segments: int = 16, rings: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """UV sphere centered on the origin."""
+    points = []
+    for row in range(rings + 1):
+        phi = row / rings * np.pi
+        for column in range(segments):
+            theta = column / segments * 2.0 * np.pi
+            points.append(
+                (
+                    radius * np.sin(phi) * np.cos(theta),
+                    radius * np.sin(phi) * np.sin(theta),
+                    radius * np.cos(phi),
+                )
+            )
+    coordinates = np.array(points, dtype=np.float64)
+    faces: list[tuple[int, int, int]] = []
+    for row in range(rings):
+        for column in range(segments):
+            a = row * segments + column
+            b = row * segments + (column + 1) % segments
+            c = (row + 1) * segments + column
+            d = (row + 1) * segments + (column + 1) % segments
+            faces.append((a, c, b))
+            faces.append((b, c, d))
+    return coordinates, np.array(faces, dtype=np.int32)
+
+
 def _place(axis: str, axial: float, u: float, v: float) -> tuple[float, float, float]:
     if axis == "X":
         return (axial, u, v)

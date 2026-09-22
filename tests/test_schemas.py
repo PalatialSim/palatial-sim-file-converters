@@ -6,9 +6,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-from isaac_usd_to_mjcf.check import check_asset
-from isaac_usd_to_mjcf.export import export_mjcf
-from isaac_usd_to_mjcf.read import load_asset
+from palatial_sim_file_converters.check import check_asset
+from palatial_sim_file_converters.export import export_mjcf
+from palatial_sim_file_converters.read import load_asset
 
 POINTS = (
     "point3f[] points = ["

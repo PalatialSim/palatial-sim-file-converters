@@ -1,16 +1,23 @@
-# isaac-usd-to-mjcf
+# palatial-sim-file-converters
 
-Convert an Isaac Sim USD asset to a MuJoCo MJCF bundle, and report collider problems before they become a wrong contact shape.
-
-Isaac stores many colliders as a unit cube or a convex fragment. The size and orientation are on `xformOp:scale` and `xformOp:orient`, including scales inherited from a parent `Colliders` prim. This package bakes that full transform into the MJCF geom. It also reports when those colliders do not match the visual mesh.
+Convert one simulation file to another. USD, MJCF, and URDF read and write in every direction. USD, MJCF, and URDF also write a GLB plus `manifest.json` containing the rigid bodies, inertias, joints, and collider metadata.
 
 ```sh
-pip install -e .
-isaac-usd-to-mjcf check asset.usd
-isaac-usd-to-mjcf convert asset.usd -o out/ --compile
+pip install -e ".[dev]"
+sim-convert asset.usd asset.xml
+sim-convert asset.xml asset.usda
+sim-convert asset.urdf asset.xml
+sim-convert asset.usd asset.urdf
+sim-convert asset.usd asset.glb
 ```
 
-`convert` writes `model.xml`, `meshes/*.obj`, and `collider_report.json`.
+`asset.glb` is accompanied by `manifest.json` in the same directory. MJCF mesh files are written to `meshes/` next to the XML. URDF meshes are written the same way.
+
+`isaac-usd-to-mjcf check asset.usd` still reports collider problems on an Isaac USD stage. `isaac-usd-to-mjcf convert asset.usd -o out/` writes the MJCF bundle and `collider_report.json`.
+
+Install the `dev` extra to run the tests (`pytest`). The `compile` extra, included by `dev`, lets `--compile` load an MJCF result in MuJoCo.
+
+Isaac stores many colliders as a unit cube or a convex fragment. The size and orientation are on `xformOp:scale` and `xformOp:orient`, including scales inherited from a parent `Colliders` prim. The USD reader bakes that transform into the collider and reports when it does not match the visual mesh. `isaac-usd-to-mjcf convert` writes `model.xml`, `meshes/*.obj`, and `collider_report.json`.
 
 ## What is checked
 
@@ -46,3 +53,5 @@ isaac-usd-to-mjcf convert asset.usd -o out/ --compile
 | Filtered pairs, or `collisionEnabled = false` | `contact/exclude` |
 
 Mass, center of mass, and principal inertia are carried over when the authored values are finite. A missing center of mass or a zero principal-axes quaternion is left at the body origin rather than written as NaN. Revolute and spherical limits and drive targets are converted from degrees to radians. Scene gravity is used only when its magnitude is authored.
+
+MJCF and URDF use the same scene. MJCF angles are read in the compiler's unit and stored as radians. URDF revolute limits are degrees. A URDF ball joint is three revolute joints, a plane is a thin box, and a distance tendon is omitted, each with a warning. GLB stores the render meshes; the physics fields live in `manifest.json`.

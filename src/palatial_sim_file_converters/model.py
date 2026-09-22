@@ -35,10 +35,14 @@ class Collider:
 @dataclass
 class Visual:
     path: str
-    local_points: np.ndarray
-    faces: np.ndarray
+    local_points: np.ndarray | None
+    faces: np.ndarray | None
     world_min: np.ndarray
     world_max: np.ndarray
+    geom_type: str = "mesh"
+    primitive_pos: tuple[float, float, float] | None = None
+    primitive_quat: tuple[float, float, float, float] | None = None
+    primitive_size: tuple[float, ...] | None = None
 
 
 @dataclass

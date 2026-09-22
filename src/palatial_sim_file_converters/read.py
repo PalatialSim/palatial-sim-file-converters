@@ -7,15 +7,15 @@ from pathlib import Path
 import numpy as np
 from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
-from isaac_usd_to_mjcf.model import Asset, Body, Collider, Joint, ScaleOp, Visual
-from isaac_usd_to_mjcf.primitives import (
+from palatial_sim_file_converters.model import Asset, Body, Collider, Joint, ScaleOp, Visual
+from palatial_sim_file_converters.primitives import (
     aabb,
     bounding_sphere,
     capsule_mesh,
     cone_mesh,
     cylinder_mesh,
 )
-from isaac_usd_to_mjcf.xform import (
+from palatial_sim_file_converters.xform import (
     Y_UP_TO_Z_UP,
     gf_matrix,
     gf_quat,
@@ -413,16 +413,12 @@ def _limits(prim, kind: str, meters: float) -> tuple[float, float] | None:
         joint = UsdPhysics.RevoluteJoint(prim)
         lower = joint.GetLowerLimitAttr().Get()
         upper = joint.GetUpperLimitAttr().Get()
-        if lower is None or upper is None:
-            return None
-        return (np.deg2rad(float(lower)), np.deg2rad(float(upper)))
+        return _finite_limit(lower, upper, angular=True)
     if kind == "prismatic":
         joint = UsdPhysics.PrismaticJoint(prim)
         lower = joint.GetLowerLimitAttr().Get()
         upper = joint.GetUpperLimitAttr().Get()
-        if lower is None or upper is None:
-            return None
-        return (float(lower) * meters, float(upper) * meters)
+        return _finite_limit(lower, upper, angular=False, meters=meters)
     return None
 
 
@@ -515,6 +511,19 @@ def _generic_joint(prim, api: UsdPhysics.Joint, meters: float):
         kind = "revolute" if dof["type"] == "hinge" else "prismatic"
         return kind, dof["axis"], dof["range"], None
     return "compound", unlocked[0]["axis"], unlocked[0]["range"], unlocked
+
+
+def _finite_limit(lower, upper, angular: bool, meters: float = 1.0):
+    """Unauthored, infinite, or reversed limits mean the degree of freedom is free."""
+    if lower is None or upper is None:
+        return None
+    lower = float(lower)
+    upper = float(upper)
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower > upper:
+        return None
+    if angular:
+        return (float(np.deg2rad(lower)), float(np.deg2rad(upper)))
+    return (lower * meters, upper * meters)
 
 
 def _limit_span(low, high, meters: float, angular: bool):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from isaac_usd_to_mjcf.model import Asset, Finding
+from palatial_sim_file_converters.model import Asset, Finding
 
 _UNIT = 1e-3
 _MIN_EXTENT = 1e-5

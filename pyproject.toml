@@ -1,8 +1,20 @@
 [project]
-name = "isaac-usd-to-mjcf"
-version = "0.1.0"
-description = "Convert Isaac Sim USD assets to MuJoCo MJCF, and check collider transforms against the visual meshes."
+name = "palatial-sim-file-converters"
+version = "0.2.0"
+description = "Convert simulation scenes between Isaac USD, MuJoCo MJCF, URDF, and glTF."
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Palatial" }]
+keywords = ["usd", "mjcf", "urdf", "mujoco", "isaac-sim", "gltf"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: OS Independent",
+]
 dependencies = [
   "numpy",
   "usd-core>=25.5",
@@ -10,9 +22,15 @@ dependencies = [
 
 [project.optional-dependencies]
 compile = ["mujoco"]
+dev = ["pytest>=8", "mujoco"]
+
+[project.urls]
+Homepage = "https://github.com/PalatialSim/palatial-sim-file-converters"
+Repository = "https://github.com/PalatialSim/palatial-sim-file-converters"
 
 [project.scripts]
-isaac-usd-to-mjcf = "isaac_usd_to_mjcf.cli:main"
+sim-convert = "palatial_sim_file_converters.cli:convert_main"
+isaac-usd-to-mjcf = "palatial_sim_file_converters.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -20,3 +38,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+palatial_sim_file_converters = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
