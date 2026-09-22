@@ -26,7 +26,7 @@ Conversion always passes through the scene model in `src/palatial_sim_file_conve
 | URDF | `urdf.py` | `urdf.py` |
 | GLB | output only | `glb.py` |
 
-A new format needs a reader or writer, a suffix in `convert.py`, and a test in `tests/`. Keep the test on the numbers and the file that gets written.
+A new format needs a reader or writer, a suffix in `convert.py`, and a test in `tests/`. Keep the test on the scene numbers. The tests do not read or write the filesystem.
 
 If a target format cannot represent a shape exactly, write the closest geom and leave a warning. Do not drop the shape quietly.
 

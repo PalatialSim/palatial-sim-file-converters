@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 — 2026-09-22
+
+Record the builds this release was checked against: MuJoCo 3.13.0 and OpenUSD 26.08 (`usd-core` 26.8).
+
 ## 0.2.1 — 2026-09-22
 
 Release under the MIT license. Add a contributing guide. Reports and manifests name the file, not the directory it was read from.

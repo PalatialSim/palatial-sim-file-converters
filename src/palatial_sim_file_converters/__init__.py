@@ -15,4 +15,4 @@ __all__ = [
     "load_mjcf",
     "load_urdf",
 ]
-__version__ = "0.2.1"
+__version__ = "0.2.2"

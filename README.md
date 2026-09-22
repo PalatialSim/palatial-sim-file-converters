@@ -3,7 +3,7 @@
 Convert one simulation file to another.
 
 ```sh
-pip install "palatial-sim-file-converters @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.1"
+pip install "palatial-sim-file-converters @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.2"
 sim-convert asset.usd asset.xml
 ```
 
@@ -30,7 +30,7 @@ You can start from `.usd`, `.usda`, `.usdc`, `.xml`, `.mjcf`, or `.urdf`. You ca
 Add `--compile` to load an MJCF result in MuJoCo. That needs the `compile` extra:
 
 ```sh
-pip install "palatial-sim-file-converters[compile] @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.1"
+pip install "palatial-sim-file-converters[compile] @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.2"
 sim-convert asset.usd asset.xml --compile
 ```
 
@@ -49,6 +49,18 @@ This prints collider warnings. It does not write a file. `isaac-usd-to-mjcf conv
 - A sphere, box, capsule, or cylinder stays that shape when the scale is uniform.
 - URDF has no ball joint, plane, distance joint, or SDF. Those become a close substitute, and the tool prints a warning.
 - GLB is an output only. It cannot be the input file.
+
+## Versions
+
+v0.2.2 was checked against these builds:
+
+| API | Version |
+| --- | --- |
+| MuJoCo | 3.13.0 |
+| OpenUSD (`usd-core`) | 26.08 |
+| glTF | 2.0 |
+
+`--compile` loads the MJCF in MuJoCo 3.13.0. USD reading and writing uses UsdPhysics from OpenUSD 26.08. The package requires `usd-core>=25.5`. Those USD schemas are the ones Isaac Sim writes. This release was not run inside an Isaac Sim install. Isaac Sim 5.1.0 ships OpenUSD 24.05, and Isaac Sim 6.0.0 ships OpenUSD 25.11.
 
 This package is [MIT licensed](LICENSE).
 
