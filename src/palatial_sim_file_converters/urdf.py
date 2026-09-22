@@ -33,9 +33,13 @@ from palatial_sim_file_converters.xform import transform_points
 
 def load_urdf(path: str | Path) -> Asset:
     path = Path(path)
-    root = ET.parse(path).getroot()
+    return parse_urdf(path.read_text(encoding="utf-8"), path.name, path.parent)
+
+
+def parse_urdf(text: str, name: str = "robot.urdf", mesh_dir: Path | None = None) -> Asset:
+    root = ET.fromstring(text)
     if root.tag != "robot":
-        raise ValueError(f"{path} is not a URDF robot")
+        raise ValueError(f"{name} is not a URDF robot")
     links = {element.get("name"): element for element in root.findall("link")}
     joints = [element for element in root.findall("joint")]
     child_of = {element.find("child").get("link"): element for element in joints if element.find("child") is not None}
@@ -64,9 +68,9 @@ def load_urdf(path: str | Path) -> Asset:
         )
         _link_inertial(element.find("inertial"), body)
         for visual in element.findall("visual"):
-            _link_shape(visual, body, path.parent, visual=True)
+            _link_shape(visual, body, mesh_dir, visual=True)
         for collision in element.findall("collision"):
-            _link_shape(collision, body, path.parent, visual=False)
+            _link_shape(collision, body, mesh_dir, visual=False)
         bodies.append(body)
         by_name[name] = body
         if joint_element is not None and parent is not None:
@@ -83,8 +87,8 @@ def load_urdf(path: str | Path) -> Asset:
     for name in roots:
         visit(name, np.eye(4), None, None)
     return Asset(
-        name=root.get("name") or path.stem,
-        source=str(path),
+        name=root.get("name") or Path(name).stem,
+        source=Path(name).name,
         up_axis="Z",
         meters_per_unit=1.0,
         bodies=bodies,
@@ -92,16 +96,26 @@ def load_urdf(path: str | Path) -> Asset:
     )
 
 
+def urdf_tree(asset: Asset) -> ET.Element:
+    return _robot(asset, None)
+
+
 def write_urdf(asset: Asset, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    mesh_dir = path.parent / "meshes"
+    robot = _robot(asset, path.parent / "meshes")
+    ET.indent(robot, space="  ")
+    path.write_text(ET.tostring(robot, encoding="unicode") + "\n", encoding="utf-8")
+    return path
+
+
+def _robot(asset: Asset, mesh_dir: Path | None) -> ET.Element:
     robot = ET.Element("robot", {"name": asset.name})
     incoming = kinematic_joints(asset)
     if _needs_world(asset, incoming):
         ET.SubElement(robot, "link", {"name": "world"})
     for body in root_bodies(asset, incoming):
-        _write_link(robot, body, None, asset, incoming, mesh_dir, path.parent)
+        _write_link(robot, body, None, asset, incoming, mesh_dir)
     if any(joint.kind == "distance" for joint in asset.joints):
         asset.findings.append(
             Finding(
@@ -111,12 +125,10 @@ def write_urdf(asset: Asset, path: str | Path) -> Path:
                 "Distance limits are omitted. URDF has no tendon or distance joint.",
             )
         )
-    ET.indent(robot, space="  ")
-    path.write_text(ET.tostring(robot, encoding="unicode") + "\n", encoding="utf-8")
-    return path
+    return robot
 
 
-def _write_link(robot, body: Body, parent: Body | None, asset, incoming, mesh_dir: Path, root: Path) -> None:
+def _write_link(robot, body: Body, parent: Body | None, asset, incoming, mesh_dir: Path | None) -> None:
     link = ET.SubElement(robot, "link", {"name": body.name})
     if body.mass is not None:
         inertial = ET.SubElement(link, "inertial")
@@ -136,16 +148,16 @@ def _write_link(robot, body: Body, parent: Body | None, asset, incoming, mesh_di
             },
         )
     for index, visual in enumerate(body.visuals):
-        _write_geometry(link, "visual", visual, body, index, mesh_dir, root, asset)
+        _write_geometry(link, "visual", visual, body, index, mesh_dir, asset)
     for index, collider in enumerate(body.colliders):
-        _write_geometry(link, "collision", collider, body, index, mesh_dir, root, asset)
+        _write_geometry(link, "collision", collider, body, index, mesh_dir, asset)
     joint = incoming.get(body.path)
     if parent is None and (body.kinematic or (joint is not None and joint.kind == "fixed")):
         _write_fixed(robot, "world", body.name, body.pos, body.quat, f"{body.name}_world")
     elif joint is not None and parent is not None:
         _write_joint(robot, joint, parent, body, asset)
     for child in child_bodies(asset, body, incoming):
-        _write_link(robot, child, body, asset, incoming, mesh_dir, root)
+        _write_link(robot, child, body, asset, incoming, mesh_dir)
 
 
 def _write_joint(robot, joint: Joint, parent: Body, child: Body, asset: Asset) -> None:
@@ -245,7 +257,7 @@ def _write_fixed(robot, parent, child, pos, quat, name) -> None:
     _origin_element(element, pos, quat)
 
 
-def _write_geometry(link, tag, shape, body: Body, index: int, mesh_dir: Path, root: Path, asset: Asset) -> None:
+def _write_geometry(link, tag, shape, body: Body, index: int, mesh_dir: Path | None, asset: Asset) -> None:
     element = ET.SubElement(link, tag)
     _origin_element(element, shape.primitive_pos or (0.0, 0.0, 0.0), shape.primitive_quat or (1.0, 0.0, 0.0, 0.0))
     geometry = ET.SubElement(element, "geometry")
@@ -268,7 +280,9 @@ def _write_geometry(link, tag, shape, body: Body, index: int, mesh_dir: Path, ro
     if points is None:
         return
     filename = f"{_token(body.name)}_{tag}_{index}.obj"
-    write_obj(mesh_dir / filename, points, faces)
+    if mesh_dir is not None:
+        mesh_dir.mkdir(parents=True, exist_ok=True)
+        write_obj(mesh_dir / filename, points, faces)
     if geom_type == "sdf":
         asset.findings.append(Finding("warning", "sdf_as_mesh", shape.path, "URDF collision meshes are triangle meshes, not MuJoCo SDFs."))
     ET.SubElement(geometry, "mesh", {"filename": str(Path("meshes") / filename)})
@@ -347,7 +361,7 @@ def _link_joint(element, parent: Body, child: Body):
     )
 
 
-def _link_shape(element, body: Body, directory: Path, visual: bool) -> None:
+def _link_shape(element, body: Body, directory: Path | None, visual: bool) -> None:
     geometry = element.find("geometry")
     if geometry is None or len(geometry) == 0:
         return
@@ -374,6 +388,8 @@ def _link_shape(element, body: Body, directory: Path, visual: bool) -> None:
         filename = shape.get("filename")
         if not filename or filename.startswith("package://"):
             return
+        if directory is None:
+            raise ValueError(f"URDF mesh {filename} needs the model directory")
         mesh_path = Path(filename)
         if not mesh_path.is_absolute():
             mesh_path = directory / filename

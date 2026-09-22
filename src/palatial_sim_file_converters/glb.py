@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from palatial_sim_file_converters.frame import child_bodies, kinematic_joints, relative_pose, root_bodies
+from palatial_sim_file_converters.frame import apply_pose, child_bodies, kinematic_joints, relative_pose, root_bodies
 from palatial_sim_file_converters.model import Asset
 from palatial_sim_file_converters.primitives import box_mesh, capsule_mesh, cylinder_mesh, sphere_mesh
 
@@ -16,9 +16,7 @@ _JSON = 0x4E4F534A
 _BIN = 0x004E4942
 
 
-def write_glb(asset: Asset, path: str | Path) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def glb_document(asset: Asset) -> tuple[bytes, dict]:
     blob = bytearray()
     views: list[dict] = []
     accessors: list[dict] = []
@@ -94,9 +92,15 @@ def write_glb(asset: Asset, path: str | Path) -> Path:
     if blob:
         chunks.append(struct.pack("<II", len(blob), _BIN) + blob)
     payload = b"".join(chunks)
-    path.write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(payload)) + payload)
-    manifest = path.parent / "manifest.json"
-    manifest.write_text(json.dumps(_manifest(asset, nodes), indent=2) + "\n", encoding="utf-8")
+    return struct.pack("<III", 0x46546C67, 2, 12 + len(payload)) + payload, _manifest(asset, nodes)
+
+
+def write_glb(asset: Asset, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload, manifest = glb_document(asset)
+    path.write_bytes(payload)
+    (path.parent / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -140,8 +144,6 @@ def _shape_mesh(shape):
         points, faces = box_mesh((size[0], size[1], 0.01))
     else:
         return None, None
-    from palatial_sim_file_converters.frame import apply_pose
-
     posed = apply_pose(points, shape.primitive_pos or (0.0, 0.0, 0.0), shape.primitive_quat or (1.0, 0.0, 0.0, 0.0))
     return posed, faces
 

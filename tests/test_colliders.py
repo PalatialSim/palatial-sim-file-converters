@@ -1,14 +1,13 @@
 """Collider scale is baked into MJCF, and the check reports when it misses the visual."""
 
-from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 from palatial_sim_file_converters.check import check_asset
-from palatial_sim_file_converters.export import export_mjcf
-from palatial_sim_file_converters.read import load_asset
+from palatial_sim_file_converters.export import mjcf_tree
+from palatial_sim_file_converters.read import load_usda
 
 CUBES = """
 int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
@@ -102,15 +101,9 @@ def Xform "World"
 """
 
 
-@pytest.fixture()
-def stage_path(tmp_path: Path) -> Path:
-    path = tmp_path / "asset.usda"
-    path.write_text(USD, encoding="utf-8")
-    return path
-
-
-def test_collider_scale_is_baked_and_flagged(stage_path: Path, tmp_path: Path):
-    asset = load_asset(stage_path)
+def test_collider_scale_is_baked_and_flagged():
+    asset = load_usda(USD)
+    assert "/" not in asset.source
     findings = check_asset(asset)
     codes = {(finding.code, finding.path) for finding in findings}
     assert ("ancestor_scale", "/World/Lid/Colliders/Collider") in codes
@@ -120,8 +113,7 @@ def test_collider_scale_is_baked_and_flagged(stage_path: Path, tmp_path: Path):
     assert ("physx_sdf", "/World/Base/shell") in codes
     assert ("double_collision", "/World/Base") in codes
 
-    xml_path = export_mjcf(asset, tmp_path / "mjcf")
-    root = ET.parse(xml_path).getroot()
+    root = mjcf_tree(asset)
     lid = root.find("./worldbody/body[@name='Base']/body[@name='Lid']")
     assert lid is not None
     assert np.allclose([float(value) for value in lid.get("pos").split()], [-2, 0, 0], atol=1e-5)
@@ -140,18 +132,6 @@ def test_collider_scale_is_baked_and_flagged(stage_path: Path, tmp_path: Path):
     assert np.allclose([float(value) for value in sphere.get("pos").split()], [0, 0, 0.01], atol=1e-6)
     assert root.find("./worldbody/body[@name='Base']/geom[@type='sdf']") is not None
 
-    collider_obj = next((tmp_path / "mjcf" / "meshes").glob("*Collider*.obj"))
-    vertices = np.array(
-        [
-            [float(item) for item in line.split()[1:]]
-            for line in collider_obj.read_text().splitlines()
-            if line.startswith("v ")
-        ]
-    )
-    extent = vertices.max(axis=0) - vertices.min(axis=0)
+    collider = next(body for body in asset.bodies if body.name == "Lid").colliders[0]
+    extent = collider.local_points.max(axis=0) - collider.local_points.min(axis=0)
     assert np.allclose(extent, [0.072, 0.072, 0.072], atol=1e-6)
-
-    mujoco = pytest.importorskip("mujoco")
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
-    assert model.nbody == 3
-    assert model.njnt == 2

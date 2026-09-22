@@ -1,16 +1,17 @@
 """Round trips between USD, MJCF, URDF, and GLB."""
 
-from pathlib import Path
-import json
 import struct
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
-from palatial_sim_file_converters.cli import convert_main
-from palatial_sim_file_converters.convert import convert_file
-from palatial_sim_file_converters.read import load_asset
+from palatial_sim_file_converters.export import mjcf_tree
+from palatial_sim_file_converters.glb import glb_document
+from palatial_sim_file_converters.mjcf_read import parse_mjcf
+from palatial_sim_file_converters.read import load_usda
+from palatial_sim_file_converters.urdf import parse_urdf, urdf_tree
+from palatial_sim_file_converters.usd_write import build_stage
 
 MJCF = """<mujoco model="sample">
   <compiler angle="radian"/>
@@ -88,11 +89,10 @@ URDF = """<robot name="arm">
 """
 
 
-def test_mjcf_usd_round_trip(tmp_path: Path):
-    source = tmp_path / "sample.xml"
-    source.write_text(MJCF)
-    usda = convert_file(source, tmp_path / "sample.usda")
-    asset = load_asset(usda)
+def test_mjcf_usd_round_trip():
+    stage = build_stage(parse_mjcf(MJCF))
+    asset = load_usda(stage.GetRootLayer().ExportToString())
+    assert "/" not in asset.source
     by_name = {body.name: body for body in asset.bodies}
     sphere = next(collider for collider in by_name["base"].colliders if collider.geom_type == "sphere")
     box = next(collider for collider in by_name["base"].colliders if collider.geom_type == "box")
@@ -112,17 +112,13 @@ def test_mjcf_usd_round_trip(tmp_path: Path):
     assert {tuple(sorted((names[a], names[b]))) for a, b in asset.filtered_pairs} == {("base", "lid")}
     assert np.allclose(asset.gravity, [0.0, 0.0, -9.81])
 
-    xml_path = convert_file(usda, tmp_path / "again.xml")
     mujoco = pytest.importorskip("mujoco")
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    model = mujoco.MjModel.from_xml_string(ET.tostring(mjcf_tree(asset), encoding="unicode"))
     assert model.nbody > 2
 
 
-def test_urdf_to_mjcf_and_usd(tmp_path: Path):
-    source = tmp_path / "arm.urdf"
-    source.write_text(URDF)
-    xml_path = convert_file(source, tmp_path / "arm.xml")
-    root = ET.parse(xml_path).getroot()
+def test_urdf_to_mjcf_and_usd():
+    root = mjcf_tree(parse_urdf(URDF))
     box = root.find(".//geom[@type='box']")
     assert np.allclose([float(value) for value in box.get("size").split()], [0.1, 0.2, 0.3])
     cylinder = root.find(".//geom[@type='cylinder']")
@@ -132,18 +128,17 @@ def test_urdf_to_mjcf_and_usd(tmp_path: Path):
     assert slide.get("type") == "slide"
     assert np.allclose([float(value) for value in slide.get("range").split()], [-0.02, 0.05])
     mujoco = pytest.importorskip("mujoco")
-    mujoco.MjModel.from_xml_path(str(xml_path))
+    mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
 
-    usda = convert_file(source, tmp_path / "arm.usda")
-    asset = load_asset(usda)
+    stage = build_stage(parse_urdf(URDF))
+    asset = load_usda(stage.GetRootLayer().ExportToString())
     prismatic = next(joint for joint in asset.joints if joint.kind == "prismatic")
     assert np.allclose(prismatic.range, [-0.02, 0.05])
     assert np.allclose(prismatic.axis, [0.0, 0.0, 1.0], atol=1e-5)
 
 
-def test_usd_to_urdf_and_glb(tmp_path: Path):
-    stage = tmp_path / "asset.usda"
-    stage.write_text(
+def test_usd_to_urdf_and_glb():
+    asset = load_usda(
         """#usda 1.0
 (
     metersPerUnit = 1
@@ -190,8 +185,7 @@ def Xform "World"
 }
 """
     )
-    urdf = convert_file(stage, tmp_path / "asset.urdf")
-    robot = ET.parse(urdf).getroot()
+    robot = urdf_tree(asset)
     assert {link.get("name") for link in robot.findall("link")} >= {"Base", "Lid"}
     joint = robot.find("joint")
     assert joint.get("type") == "revolute"
@@ -199,14 +193,12 @@ def Xform "World"
     assert float(limit.get("lower")) == pytest.approx(-50)
     assert float(limit.get("upper")) == pytest.approx(110)
 
-    glb = convert_file(stage, tmp_path / "asset.glb")
-    header = glb.read_bytes()[:12]
-    magic, version, _length = struct.unpack("<III", header)
+    payload, manifest = glb_document(asset)
+    magic, version, _length = struct.unpack("<III", payload[:12])
     assert magic == 0x46546C67
     assert version == 2
-    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert "/" not in manifest["source"]
     masses = {body["name"]: body["mass"] for body in manifest["bodies"]}
     assert masses["Base"] == pytest.approx(0.2)
     assert masses["Lid"] == pytest.approx(0.1)
     assert manifest["joints"][0]["type"] == "revolute"
-    assert convert_main([str(stage), str(tmp_path / "cli.xml")]) == 0

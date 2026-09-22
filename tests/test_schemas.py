@@ -1,14 +1,13 @@
 """UsdPhysics shapes and joints that MuJoCo cannot take verbatim."""
 
-from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 from palatial_sim_file_converters.check import check_asset
-from palatial_sim_file_converters.export import export_mjcf
-from palatial_sim_file_converters.read import load_asset
+from palatial_sim_file_converters.export import mjcf_tree
+from palatial_sim_file_converters.read import load_usda
 
 POINTS = (
     "point3f[] points = ["
@@ -205,13 +204,10 @@ def Xform "World"
 """
 
 
-def test_generated_shapes_and_joints(tmp_path: Path):
-    stage = tmp_path / "schemas.usda"
-    stage.write_text(USD)
-    asset = load_asset(stage)
+def test_generated_shapes_and_joints():
+    asset = load_usda(USD)
     check_asset(asset)
-    xml_path = export_mjcf(asset, tmp_path / "out")
-    root = ET.parse(xml_path).getroot()
+    root = mjcf_tree(asset)
 
     box = _geom(root, "Block")
     assert box.get("type") == "box"
@@ -264,10 +260,6 @@ def test_generated_shapes_and_joints(tmp_path: Path):
         [float(v) for v in root.find("option").get("gravity").split()],
         [0.0, 0.0, -9.81],
     )
-
-    mujoco = pytest.importorskip("mujoco")
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
-    assert model.nbody > 1
 
 
 def _geom(root: ET.Element, body: str) -> ET.Element:

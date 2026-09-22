@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 — 2026-09-22
+
+Release under the MIT license. Add a contributing guide. Reports and manifests name the file, not the directory it was read from.
+
 ## 0.2.0 — 2026-09-22
 
 Convert between USD, MJCF, and URDF in either direction, and write a GLB with `manifest.json`, from one command: `sim-convert INPUT OUTPUT`.

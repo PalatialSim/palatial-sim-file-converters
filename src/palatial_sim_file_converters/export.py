@@ -11,6 +11,10 @@ import numpy as np
 from palatial_sim_file_converters.model import Asset, Body, Collider, Joint
 from palatial_sim_file_converters.xform import invert_rigid, matrix_to_quat
 
+def mjcf_tree(asset: Asset) -> ET.Element:
+    return _mjcf(asset, None)
+
+
 def export_mjcf(asset: Asset, output: str | Path) -> Path:
     output = Path(output)
     if output.suffix.lower() in {".xml", ".mjcf"}:
@@ -19,8 +23,14 @@ def export_mjcf(asset: Asset, output: str | Path) -> Path:
     else:
         directory = output
         xml_path = directory / "model.xml"
-    mesh_dir = directory / "meshes"
-    mesh_dir.mkdir(parents=True, exist_ok=True)
+    root = _mjcf(asset, directory / "meshes")
+    xml_path.parent.mkdir(parents=True, exist_ok=True)
+    xml_path.write_text(ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
+    _write_report(asset, directory)
+    return xml_path
+
+
+def _mjcf(asset: Asset, mesh_dir: Path | None) -> ET.Element:
     root = ET.Element("mujoco", {"model": asset.name})
     ET.SubElement(root, "compiler", {"angle": "radian", "autolimits": "true"})
     ET.SubElement(root, "option", {"gravity": _format(asset.gravity)})
@@ -70,10 +80,7 @@ def export_mjcf(asset: Asset, output: str | Path) -> Path:
             ET.SubElement(contact, "exclude", {"body1": body_a, "body2": body_b})
 
     ET.indent(root, space="  ")
-    xml_path.parent.mkdir(parents=True, exist_ok=True)
-    xml_path.write_text(ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
-    _write_report(asset, directory)
-    return xml_path
+    return root
 
 
 def _incoming(joints: list[Joint]) -> dict[str, Joint]:
@@ -275,13 +282,15 @@ def _mesh_asset(points, faces, path, asset_node, mesh_dir: Path, meshes: dict[in
         return meshes[key]
     name = _leaf(path)
     filename = f"{name}.obj"
-    target = mesh_dir / filename
-    suffix = 2
-    while target.exists():
-        filename = f"{name}_{suffix}.obj"
+    if mesh_dir is not None:
+        mesh_dir.mkdir(parents=True, exist_ok=True)
         target = mesh_dir / filename
-        suffix += 1
-    _write_obj(target, points, faces)
+        suffix = 2
+        while target.exists():
+            filename = f"{name}_{suffix}.obj"
+            target = mesh_dir / filename
+            suffix += 1
+        _write_obj(target, points, faces)
     ET.SubElement(asset_node, "mesh", {"name": Path(filename).stem, "file": f"meshes/{filename}"})
     meshes[key] = Path(filename).stem
     return meshes[key]

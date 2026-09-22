@@ -33,9 +33,21 @@ _AXIS = {
 
 
 def load_asset(path: str | Path) -> Asset:
+    path = Path(path)
     stage = Usd.Stage.Open(str(path))
     if stage is None:
         raise FileNotFoundError(path)
+    return asset_from_stage(stage, path.name)
+
+
+def load_usda(text: str, name: str = "asset.usda") -> Asset:
+    stage = Usd.Stage.CreateInMemory()
+    if not stage.GetRootLayer().ImportFromString(text):
+        raise ValueError(f"{name} is not a USDA layer")
+    return asset_from_stage(stage, name)
+
+
+def asset_from_stage(stage, name: str) -> Asset:
     meters = float(UsdGeom.GetStageMetersPerUnit(stage) or 1.0)
     kilograms = float(UsdPhysics.GetStageKilogramsPerUnit(stage) or 1.0)
     up_axis = UsdGeom.GetStageUpAxis(stage) or "Z"
@@ -45,8 +57,8 @@ def load_asset(path: str | Path) -> Asset:
     _attach_geometry(stage, cache, by_path, meters, up_axis)
     joints = _joints(stage, by_path, meters)
     return Asset(
-        name=Path(path).stem,
-        source=str(path),
+        name=Path(name).stem,
+        source=Path(name).name,
         up_axis=up_axis,
         meters_per_unit=meters,
         bodies=bodies,

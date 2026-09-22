@@ -3,7 +3,7 @@
 Convert one simulation file to another.
 
 ```sh
-pip install "palatial-sim-file-converters @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.0"
+pip install "palatial-sim-file-converters @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.1"
 sim-convert asset.usd asset.xml
 ```
 
@@ -30,7 +30,7 @@ You can start from `.usd`, `.usda`, `.usdc`, `.xml`, `.mjcf`, or `.urdf`. You ca
 Add `--compile` to load an MJCF result in MuJoCo. That needs the `compile` extra:
 
 ```sh
-pip install "palatial-sim-file-converters[compile] @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.0"
+pip install "palatial-sim-file-converters[compile] @ git+https://github.com/PalatialSim/palatial-sim-file-converters.git@v0.2.1"
 sim-convert asset.usd asset.xml --compile
 ```
 
@@ -49,3 +49,22 @@ This prints collider warnings. It does not write a file. `isaac-usd-to-mjcf conv
 - A sphere, box, capsule, or cylinder stays that shape when the scale is uniform.
 - URDF has no ball joint, plane, distance joint, or SDF. Those become a close substitute, and the tool prints a warning.
 - GLB is an output only. It cannot be the input file.
+
+This package is [MIT licensed](LICENSE).
+
+## Contributing
+
+Clone the repo, install the dev extra, and run the tests:
+
+```sh
+git clone https://github.com/PalatialSim/palatial-sim-file-converters.git
+cd palatial-sim-file-converters
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+A conversion goes through `model.py`. Add the reader or writer for your format, cover it with a test in `tests/`, and add a line to `CHANGELOG.md`. Then open a pull request.
+
+The full guide is [CONTRIBUTING.md](CONTRIBUTING.md). Issues go to [GitHub](https://github.com/PalatialSim/palatial-sim-file-converters/issues).

@@ -26,12 +26,8 @@ from palatial_sim_file_converters.model import Asset, Body, Joint
 from palatial_sim_file_converters.primitives import box_mesh, sphere_mesh
 
 
-def write_usd(asset: Asset, path: str | Path) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-    stage = Usd.Stage.CreateNew(str(path))
+def build_stage(asset: Asset):
+    stage = Usd.Stage.CreateInMemory()
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     UsdPhysics.SetStageKilogramsPerUnit(stage, 1.0)
@@ -45,7 +41,16 @@ def write_usd(asset: Asset, path: str | Path) -> Path:
     for joint in asset.joints:
         _emit_joint(stage, joint, written)
     _filtered(stage, asset, written)
-    stage.GetRootLayer().Save()
+    return stage
+
+
+def write_usd(asset: Asset, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    stage = build_stage(asset)
+    stage.GetRootLayer().Export(str(path))
     return path
 
 

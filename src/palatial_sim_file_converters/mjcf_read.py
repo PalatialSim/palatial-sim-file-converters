@@ -22,16 +22,19 @@ from palatial_sim_file_converters.xform import transform_points
 
 def load_mjcf(path: str | Path) -> Asset:
     path = Path(path)
-    root = ET.parse(path).getroot()
+    return parse_mjcf(path.read_text(encoding="utf-8"), path.name, path.parent)
+
+
+def parse_mjcf(text: str, name: str = "model.xml", mesh_dir: Path | None = None) -> Asset:
+    root = ET.fromstring(text)
     if root.tag != "mujoco":
-        raise ValueError(f"{path} is not an MJCF model")
+        raise ValueError(f"{name} is not an MJCF model")
     if root.find(".//include") is not None:
-        raise ValueError(f"{path} uses MJCF include. Expand includes before converting.")
+        raise ValueError(f"{name} uses MJCF include. Expand includes before converting.")
     compiler = root.find("compiler")
     degrees = compiler is None or compiler.get("angle", "degree") != "radian"
-    mesh_dir = path.parent
-    if compiler is not None and compiler.get("meshdir"):
-        mesh_dir = path.parent / compiler.get("meshdir")
+    if mesh_dir is not None and compiler is not None and compiler.get("meshdir"):
+        mesh_dir = mesh_dir / compiler.get("meshdir")
     meshes = _mesh_assets(root, mesh_dir)
     classes = _default_classes(root)
     option = root.find("option")
@@ -43,12 +46,12 @@ def load_mjcf(path: str | Path) -> Asset:
     names: dict[str, str] = {}
     world = root.find("worldbody")
     if world is None:
-        raise ValueError(f"{path} has no worldbody")
+        raise ValueError(f"{name} has no worldbody")
     _consume_body_children(world, None, np.eye(4), "", classes, degrees, meshes, used, bodies, joints, sites, names)
     joints.extend(_tendons(root, sites, names, degrees))
     return Asset(
-        name=root.get("model") or path.stem,
-        source=str(path),
+        name=root.get("model") or Path(name).stem,
+        source=Path(name).name,
         up_axis="Z",
         meters_per_unit=1.0,
         bodies=bodies,
@@ -375,12 +378,14 @@ def _excludes(root, names) -> list[tuple[str, str]]:
     return pairs
 
 
-def _mesh_assets(root, mesh_dir: Path) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+def _mesh_assets(root, mesh_dir: Path | None) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
     assets = {}
     for mesh in root.findall("./asset/mesh"):
         name = mesh.get("name") or Path(mesh.get("file", "mesh")).stem
         scale = np.array(_vector(mesh.get("scale"), (1.0, 1.0, 1.0)), dtype=np.float64)
         if mesh.get("file"):
+            if mesh_dir is None:
+                raise ValueError(f"MJCF mesh {mesh.get('file')} needs the model directory")
             points, faces = load_surface(mesh_dir / mesh.get("file"))
         elif mesh.get("vertex"):
             values = _floats(mesh.get("vertex"))
