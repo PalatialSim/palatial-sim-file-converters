@@ -55,6 +55,7 @@ def asset_from_stage(stage, name: str) -> Asset:
     bodies = _bodies(stage, cache, meters, kilograms, up_axis)
     by_path = {body.path: body for body in bodies}
     _attach_geometry(stage, cache, by_path, meters, up_axis)
+    bodies = list(by_path.values())
     joints = _joints(stage, by_path, meters)
     return Asset(
         name=Path(name).stem,
@@ -70,18 +71,17 @@ def asset_from_stage(stage, name: str) -> Asset:
 
 def _bodies(stage, cache, meters: float, kilograms: float, up_axis: str) -> list[Body]:
     bodies: list[Body] = []
-    used: set[str] = set()
-    for prim in stage.Traverse():
+    used: set[str] = {"world"}
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
         if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
             continue
         rigid_api = UsdPhysics.RigidBodyAPI(prim)
         enabled = rigid_api.GetRigidBodyEnabledAttr().Get()
-        if enabled is False:
-            continue
+        static = enabled is False
         rigid, pos, quat = _rigid_pose(cache, prim, meters, up_axis)
         name = _unique(prim.GetName(), used)
         mass, com, inertia, axes = _mass(prim, cache, rigid, meters, kilograms, up_axis)
-        kinematic = bool(rigid_api.GetKinematicEnabledAttr().Get())
+        kinematic = not static and bool(rigid_api.GetKinematicEnabledAttr().Get())
         bodies.append(
             Body(
                 path=str(prim.GetPath()),
@@ -94,6 +94,7 @@ def _bodies(stage, cache, meters: float, kilograms: float, up_axis: str) -> list
                 diaginertia=inertia,
                 principal_quat=axes,
                 kinematic=kinematic,
+                static=static,
             )
         )
     return bodies
@@ -101,20 +102,36 @@ def _bodies(stage, cache, meters: float, kilograms: float, up_axis: str) -> list
 
 def _attach_geometry(stage, cache, bodies: dict[str, Body], meters: float, up_axis: str) -> None:
     body_paths = set(bodies)
-    for prim in stage.Traverse():
-        owner = _owner(prim, body_paths)
-        if owner is None:
+    used = {"world", *(body.name for body in bodies.values())}
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
+        path = str(prim.GetPath())
+        owner = path if path in body_paths else _owner(prim, body_paths)
+        collides = (prim.HasAPI(UsdPhysics.CollisionAPI)
+                    and UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get() is not False)
+        visual = (bool(UsdGeom.Gprim(prim)) and not _guide(prim)
+                  and UsdGeom.Imageable(prim).ComputeVisibility() != UsdGeom.Tokens.invisible)
+        if not collides and not visual:
             continue
-        body = bodies[owner]
-        if prim.HasAPI(UsdPhysics.CollisionAPI):
+        if owner is None:
+            # Unowned geometry is fixed world geometry, not a missing dynamic body.
+            # Keep its source prim/frame rather than merging independent supports.
+            rigid, pos, quat = _rigid_pose(cache, prim, meters, up_axis)
+            body = Body(path=str(prim.GetPath()), name=_unique(prim.GetName(), used),
+                        pos=pos, quat=quat, rigid=rigid, mass=None, com=None,
+                        diaginertia=None, principal_quat=None, kinematic=False, static=True)
+        else:
+            body = bodies[owner]
+        if collides:
             collider = _collider(prim, body, cache, meters, up_axis)
             if collider is not None:
                 body.colliders.append(collider)
-            continue
-        if prim.GetTypeName() == "Mesh" and not _guide(prim):
-            visual = _visual(prim, body, cache, meters, up_axis)
-            if visual is not None:
-                body.visuals.append(visual)
+        elif visual:
+            shape = _visual(prim, body, cache, meters, up_axis)
+            if shape is not None:
+                body.visuals.append(shape)
+        if owner is None and (body.colliders or body.visuals):
+            bodies[body.path] = body
+            body_paths.add(body.path)
 
 
 def _collider(prim, body: Body, cache, meters: float, up_axis: str) -> Collider | None:
@@ -133,6 +150,7 @@ def _collider(prim, body: Body, cache, meters: float, up_axis: str) -> Collider 
     scales = _scale_ops(prim, body.path)
     kind = prim.GetTypeName()
     dedicated = "collider" in str(prim.GetPath()).lower()
+    visible = not _guide(prim) and UsdGeom.Imageable(prim).ComputeVisibility() != UsdGeom.Tokens.invisible
     if kind == "Mesh":
         points, faces = _mesh(prim)
         if points is None:
@@ -147,6 +165,7 @@ def _collider(prim, body: Body, cache, meters: float, up_axis: str) -> Collider 
             friction,
             world,
             to_body,
+            visible,
         )
     primitive = _primitive(prim, to_body)
     if primitive is None:
@@ -170,6 +189,7 @@ def _collider(prim, body: Body, cache, meters: float, up_axis: str) -> Collider 
         world_min=world_min,
         world_max=world_max,
         friction=friction,
+        visible=visible,
         local_points=local_points,
         faces=local_faces,
         primitive_pos=pos,
@@ -179,10 +199,22 @@ def _collider(prim, body: Body, cache, meters: float, up_axis: str) -> Collider 
 
 
 def _visual(prim, body: Body, cache, meters: float, up_axis: str) -> Visual | None:
+    world = _world_matrix(cache, prim, meters, up_axis)
+    to_body = world @ invert_rigid(body.rigid)
+    if prim.GetTypeName() != "Mesh":
+        primitive = _primitive(prim, to_body)
+        if primitive is None:
+            return None
+        pos, quat, size, geom_type, points, faces = primitive
+        world_min, world_max = _primitive_world_bounds(prim, world)
+        if points is not None:
+            points = transform_points(to_body, points)
+        return Visual(path=str(prim.GetPath()), local_points=points, faces=faces,
+                      world_min=world_min, world_max=world_max, geom_type=geom_type,
+                      primitive_pos=pos, primitive_quat=quat, primitive_size=size)
     points, faces = _mesh(prim)
     if points is None:
         return None
-    world = _world_matrix(cache, prim, meters, up_axis)
     world_points = transform_points(world, points)
     local_points = transform_points(world @ invert_rigid(body.rigid), points)
     return Visual(
@@ -194,7 +226,7 @@ def _visual(prim, body: Body, cache, meters: float, up_axis: str) -> Visual | No
     )
 
 
-def _mesh_collider(prim, points, faces, approximation, dedicated, scales, friction, world, to_body):
+def _mesh_collider(prim, points, faces, approximation, dedicated, scales, friction, world, to_body, visible):
     """Map a mesh collider using the UsdPhysics approximation token.
 
     ``convexHull`` becomes a MuJoCo mesh geom, which collides as a convex hull.
@@ -213,6 +245,7 @@ def _mesh_collider(prim, points, faces, approximation, dedicated, scales, fricti
         world_min=world_points.min(axis=0),
         world_max=world_points.max(axis=0),
         friction=friction,
+        visible=visible,
     )
     if token == "boundingCube":
         center, half = aabb(points)
@@ -340,7 +373,7 @@ def _primitive_world_bounds(prim, world: np.ndarray):
 def _joints(stage, bodies: dict[str, Body], meters: float) -> list[Joint]:
     joints: list[Joint] = []
     used: set[str] = set()
-    for prim in stage.Traverse():
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
         kind = _joint_kind(prim)
         if kind is None:
             continue
@@ -563,7 +596,7 @@ def _axial_scale(axis_scale, axis: str) -> float:
 
 
 def _gravity(stage, meters: float) -> tuple[float, float, float]:
-    for prim in stage.Traverse():
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
         if prim.GetTypeName() != "PhysicsScene":
             continue
         scene = UsdPhysics.Scene(prim)
@@ -589,7 +622,7 @@ def _gravity(stage, meters: float) -> tuple[float, float, float]:
 def _filtered_pairs(stage, body_paths: set[str]) -> list[tuple[str, str]]:
     pairs = []
     seen: set[tuple[str, str]] = set()
-    for prim in stage.Traverse():
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
         if not prim.HasAPI(UsdPhysics.FilteredPairsAPI):
             continue
         relation = prim.GetRelationship("physics:filteredPairs")
@@ -747,19 +780,11 @@ def _rigid_pose(cache, prim, meters: float, up_axis: str):
 
 
 def _rotation_of(matrix: np.ndarray) -> np.ndarray:
-    gf = Gf.Matrix4d(
-        float(matrix[0, 0]), float(matrix[0, 1]), float(matrix[0, 2]), float(matrix[0, 3]),
-        float(matrix[1, 0]), float(matrix[1, 1]), float(matrix[1, 2]), float(matrix[1, 3]),
-        float(matrix[2, 0]), float(matrix[2, 1]), float(matrix[2, 2]), float(matrix[2, 3]),
-        float(matrix[3, 0]), float(matrix[3, 1]), float(matrix[3, 2]), float(matrix[3, 3]),
-    )
-    extracted = gf.ExtractRotationMatrix()
-    rotation = np.array(
-        [[extracted[row][col] for col in range(3)] for row in range(3)],
-        dtype=np.float64,
-    )
-    if np.linalg.det(rotation) < 0.0:
-        rotation[:, 0] *= -1.0
+    # A rigid frame must exclude scale/shear: those are baked into geometry.
+    left, _, right = np.linalg.svd(matrix[:3, :3])
+    if np.linalg.det(left @ right) < 0.0:
+        left[:, -1] *= -1.0
+    rotation = left @ right
     return rotation
 
 
@@ -820,7 +845,7 @@ def _owner(prim, body_paths: set[str]) -> str | None:
 
 
 def _guide(prim) -> bool:
-    purpose = UsdGeom.Imageable(prim).GetPurposeAttr().Get()
+    purpose = UsdGeom.Imageable(prim).ComputePurpose()
     return purpose == UsdGeom.Tokens.guide
 
 

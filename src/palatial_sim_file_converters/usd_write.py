@@ -61,7 +61,9 @@ def _emit_body(stage, body: Body, parent: Body | None, parent_path: str, asset, 
     position, quat = relative_pose(body, parent)
     _set_pose(xform, position, quat)
     rigid = UsdPhysics.RigidBodyAPI.Apply(xform.GetPrim())
-    if body.kinematic:
+    if body.static:
+        rigid.CreateRigidBodyEnabledAttr().Set(False)
+    elif body.kinematic:
         rigid.CreateKinematicEnabledAttr().Set(True)
     if body.mass is not None:
         mass = UsdPhysics.MassAPI.Apply(xform.GetPrim())
@@ -94,6 +96,8 @@ def _emit_shape(stage, body_prim, shape, name: str, collide: bool) -> None:
         prim = _primitive(stage, path, shape)
     if collide:
         UsdPhysics.CollisionAPI.Apply(prim)
+        if not shape.visible:
+            UsdGeom.Imageable(prim).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
         if points is not None:
             approximation = UsdPhysics.MeshCollisionAPI.Apply(prim)
             token = "sdf" if shape.geom_type == "sdf" else "convexHull"
@@ -350,4 +354,3 @@ def _token(name: str) -> str:
     if not cleaned or cleaned[0].isdigit():
         cleaned = f"n_{cleaned}"
     return cleaned
-

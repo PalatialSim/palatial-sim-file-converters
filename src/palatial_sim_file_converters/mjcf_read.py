@@ -39,7 +39,7 @@ def parse_mjcf(text: str, name: str = "model.xml", mesh_dir: Path | None = None)
     classes = _default_classes(root)
     option = root.find("option")
     gravity = _vector(option.get("gravity") if option is not None else None, (0.0, 0.0, -9.81))
-    used: set[str] = set()
+    used: set[str] = {"world"}
     bodies: list[Body] = []
     joints: list[Joint] = []
     sites: dict[str, tuple[str, tuple[float, float, float]]] = {}
@@ -71,7 +71,8 @@ def _consume_body_children(node, parent, parent_rigid, active_class, classes, de
     geoms = [element for element in list(node) if element.tag == "geom"]
     if not geoms:
         return
-    body = _new_body("world", used, names, np.eye(4), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0), kinematic=True)
+    body = _new_body("world", used, names, np.eye(4), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0), kinematic=False)
+    body.static = True
     bodies.append(body)
     for geom in geoms:
         _read_geom(geom, body, active_class, classes, degrees, meshes)
@@ -107,6 +108,7 @@ def _read_body(element, parent, parent_rigid, active_class, classes, degrees, me
             site_name = child.get("name") or spec.get("name")
             if site_name:
                 sites[site_name] = (body.path, _vector(spec.get("pos"), (0.0, 0.0, 0.0)))
+    body.static = parent is None and not has_free and not motion and attrib.get("mocap") != "true"
     if parent is not None and not has_free and not motion:
         joints.append(_fixed(body, parent, used))
     elif len(motion) == 1:
@@ -232,6 +234,8 @@ def _read_geom(element, body: Body, active_class, classes, degrees: bool, meshes
     contype = int(float(spec.get("contype", "1")))
     conaffinity = int(float(spec.get("conaffinity", "1")))
     visual = contype == 0 and conaffinity == 0
+    rgba = _floats(spec.get("rgba", "0.5 0.5 0.5 1"))
+    visible = len(rgba) != 4 or rgba[3] > 0.0
     points = faces = None
     primitive_size = None
     if geom_type in {"mesh", "sdf"}:
@@ -248,6 +252,8 @@ def _read_geom(element, body: Body, active_class, classes, degrees: bool, meshes
         primitive_size = _mujoco_size(geom_type, size)
     world_min, world_max = _bounds(body.rigid, geom_type, primitive_size, pos, points)
     if visual:
+        if not visible:
+            return
         body.visuals.append(
             Visual(
                 path=path,
@@ -274,6 +280,7 @@ def _read_geom(element, body: Body, active_class, classes, degrees: bool, meshes
             world_min=world_min,
             world_max=world_max,
             friction=friction,
+            visible=visible,
             local_points=points,
             faces=faces,
             primitive_pos=pos,

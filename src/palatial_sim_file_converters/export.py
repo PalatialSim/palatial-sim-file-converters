@@ -49,7 +49,7 @@ def _mjcf(asset: Asset, mesh_dir: Path | None) -> ET.Element:
         attrs["quat"] = _format(quat)
         node = ET.SubElement(parent, "body", attrs)
         joint = incoming.get(body.path)
-        if parent_body is None and joint is None and not body.kinematic:
+        if parent_body is None and joint is None and not body.kinematic and not body.static:
             ET.SubElement(node, "freejoint", {"name": f"{body.name}_free"})
         elif joint is not None and joint.kind not in {"fixed", "distance"}:
             _add_joint(node, joint)
@@ -250,9 +250,11 @@ def _add_geoms(body, source: Body, asset_node, mesh_dir: Path, meshes: dict[int,
 def _add_collider(body, source, collider: Collider, index, has_visual, density, asset_node, mesh_dir, meshes):
     attrs = {
         "name": f"{source.name}_col_{index}",
-        "group": "3" if has_visual else "0",
+        "group": "3" if has_visual or not collider.visible else "0",
         **density,
     }
+    if not collider.visible:
+        attrs["rgba"] = "0 0 0 0"
     if collider.friction is not None:
         static, _, _ = collider.friction
         attrs["friction"] = f"{static:.8g} 0.005 0.0001"
