@@ -92,6 +92,83 @@ def test_repeated_usd_instances_keep_bodies_colliders_and_world_poses():
     assert model.nv == 12 and model.ngeom == 2
 
 
+def test_converted_instance_supports_hold_dynamic_props_in_mujoco():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    mujoco = pytest.importorskip("mujoco")
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    physics = UsdPhysics.Scene.Define(stage, "/Physics")
+    physics.CreateGravityDirectionAttr((0, 0, -1))
+    physics.CreateGravityMagnitudeAttr(9.81)
+    stage.CreateClassPrim("/SupportTemplate")
+    shape = UsdGeom.Cube.Define(stage, "/SupportTemplate/Shape")
+    UsdPhysics.CollisionAPI.Apply(shape.GetPrim())
+    for name, position, scale in [
+        ("Floor", (0, 0, -0.05), (2, 2, 0.05)),
+        ("Table", (0, 0, 0.75), (0.4, 0.25, 0.02)),
+    ]:
+        support = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        support.GetPrim().GetReferences().AddInternalReference("/SupportTemplate")
+        support.GetPrim().SetInstanceable(True)
+        support.AddTranslateOp().Set(position)
+        support.AddScaleOp().Set(scale)
+    for name, x in [("TableProp", 0), ("FloorProp", 1)]:
+        prop = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        prop.AddTranslateOp().Set((x, 0, 1.1))
+        UsdPhysics.RigidBodyAPI.Apply(prop.GetPrim())
+        sphere = UsdGeom.Sphere.Define(stage, f"/World/{name}/Shape")
+        sphere.CreateRadiusAttr(0.03)
+        UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+
+    asset = asset_from_stage(stage, "support-fixture.usda")
+    xml = mjcf_tree(asset)
+    model = mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert model.nv == 12 and data.ncon == 0
+    by_path = {body.path: body for body in asset.bodies}
+    body_ids = {
+        path: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body.name)
+        for path, body in by_path.items()
+    }
+    settled_positions = []
+    for step in range(2000):
+        mujoco.mj_step(model, data)
+        if step >= 1750:
+            settled_positions.append(data.xpos.copy())
+    for prop, support, height in [
+        ("TableProp", "Table", 0.8), ("FloorProp", "Floor", 0.03),
+    ]:
+        prop_id = body_ids[f"/World/{prop}"]
+        support_id = body_ids[f"/World/{support}/Shape"]
+        assert data.xpos[prop_id, 2] == pytest.approx(height, abs=0.001)
+        assert np.ptp(np.array(settled_positions)[:, prop_id, 2]) < 1e-6
+        assert any(
+            {int(model.geom_bodyid[c.geom1]), int(model.geom_bodyid[c.geom2])}
+            == {prop_id, support_id}
+            for c in data.contact
+        )
+    assert np.isfinite(data.qpos).all() and np.max(np.abs(data.qvel)) < 1e-5
+    assert min(c.dist for c in data.contact) > -0.001
+
+    # Removing precisely the converted static supports must make both props fall.
+    world = xml.find("worldbody")
+    static_names = {body.name for body in asset.bodies if body.static}
+    for body in list(world):
+        if body.get("name") in static_names:
+            world.remove(body)
+    unsupported = mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
+    falling = mujoco.MjData(unsupported)
+    for _ in range(1000):
+        mujoco.mj_step(unsupported, falling)
+    assert all(falling.qpos[int(unsupported.jnt_qposadr[joint]) + 2] < -1
+               for joint in range(unsupported.njnt))
+    assert falling.ncon == 0
+
+
 def test_fixed_mjcf_geometry_round_trips_without_new_free_motion():
     asset = parse_mjcf('<mujoco><worldbody><geom type="box" size="2 2 .1"/><body name="fixed"><geom type="sphere" size=".2"/></body></worldbody></mujoco>')
     assert all(body.static and not body.kinematic for body in asset.bodies)

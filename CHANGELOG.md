@@ -4,6 +4,8 @@
 
 Preserve static scene supports and visual geometry in USD conversion, traverse referenced instance contents, and keep fixed world geometry distinct from kinematic bodies through USD, MJCF, URDF and GLB output.
 
+Verify converted referenced floor/table supports with a local MuJoCo drop-and-settle regression and a missing-support control.
+
 ## 0.2.2 — 2026-09-22
 
 Record the builds this release was checked against: MuJoCo 3.13.0 and OpenUSD 26.08 (`usd-core` 26.8).
