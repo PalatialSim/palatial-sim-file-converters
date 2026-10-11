@@ -180,6 +180,64 @@ def test_fixed_mjcf_geometry_round_trips_without_new_free_motion():
     assert model.nv == 0 and model.ngeom == 2
 
 
+def test_disabled_nested_body_geometry_belongs_to_enabled_ancestor():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    for path, enabled in [
+        ("/World/Parent", True), ("/World/Parent/Disabled", False),
+        ("/World/Parent/Disabled/Nested", False),
+        ("/World/Parent/Disabled/Independent", True), ("/World/Fixed", False),
+    ]:
+        body = UsdGeom.Xform.Define(stage, path)
+        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim()).CreateRigidBodyEnabledAttr(enabled)
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, path + "/Shape").GetPrim())
+        if not enabled:
+            UsdPhysics.MassAPI.Apply(body.GetPrim()).CreateMassAttr(123)
+    asset = asset_from_stage(stage, "nested.usda")
+    bodies = {body.path: body for body in asset.bodies}
+    assert set(bodies) == {"/World/Parent", "/World/Parent/Disabled/Independent", "/World/Fixed"}
+    assert len(bodies["/World/Parent"].colliders) == 3
+    assert len(bodies["/World/Parent/Disabled/Independent"].colliders) == 1
+    assert bodies["/World/Fixed"].static
+    assert bodies["/World/Parent"].mass is None
+    model = pytest.importorskip("mujoco").MjModel.from_xml_string(ET.tostring(mjcf_tree(asset), encoding="unicode"))
+    assert model.nv == 12 and model.ngeom == 5
+    restored = asset_from_stage(build_stage(asset), "restored.usda")
+    assert sorted(len(body.colliders) for body in restored.bodies) == [1, 1, 3]
+
+
+@pytest.mark.parametrize("joint_type,parent_enabled", [("revolute", True), ("fixed", True), ("revolute", False)])
+def test_tree_targets_refuse_joint_layout_that_would_animate_static_support(joint_type, parent_enabled):
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    for name, enabled in [("Parent", parent_enabled), ("Support", False)]:
+        body = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim()).CreateRigidBodyEnabledAttr(enabled)
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, f"/World/{name}/Shape").GetPrim())
+    joint_schema = UsdPhysics.RevoluteJoint if joint_type == "revolute" else UsdPhysics.FixedJoint
+    joint = joint_schema.Define(stage, "/World/Joint")
+    joint.CreateBody0Rel().SetTargets(["/World/Parent"])
+    joint.CreateBody1Rel().SetTargets(["/World/Support"])
+    asset = asset_from_stage(stage, "joint-fixture.usda")
+    assert next(body for body in asset.bodies if body.name == "Support").static
+    with pytest.raises(ValueError, match="would make static body Support move"):
+        mjcf_tree(asset)
+    with pytest.raises(ValueError, match="would make static body Support move in URDF"):
+        urdf_tree(asset)
+    # The unchanged source can still be carried into the USD target.
+    restored = asset_from_stage(build_stage(asset), "restored.usda")
+    assert next(body for body in restored.bodies if body.name == "Support").static
+    assert len(restored.joints) == 1
+
+
 def test_visual_visibility_is_inherited_without_disabling_physical_colliders():
     from pxr import Usd, UsdGeom, UsdPhysics
     from palatial_sim_file_converters.read import asset_from_stage

@@ -109,6 +109,24 @@ def kinematic_joints(asset: Asset) -> dict[str, Joint]:
     return incoming
 
 
+def validate_static_joint_layout(asset: Asset, target: str) -> None:
+    """Refuse tree layouts that cannot keep an authored static endpoint fixed."""
+    bodies = {body.path: body for body in asset.bodies}
+    for joint in asset.joints:
+        child = bodies.get(joint.child)
+        parent = bodies.get(joint.parent)
+        if (
+            child is not None
+            and child.static
+            and joint.kind != "distance"
+            and (joint.kind != "fixed" or parent is not None and not parent.static)
+        ):
+            raise ValueError(
+                f"Joint {joint.name} would make static body {child.name} move in {target}. "
+                "Orient a supported joint with the static endpoint as its parent before conversion."
+            )
+
+
 def root_bodies(asset: Asset, incoming: dict[str, Joint]) -> list[Body]:
     return [
         body

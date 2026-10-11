@@ -34,7 +34,14 @@ def build_stage(asset: Asset):
     world = UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(world.GetPrim())
     _gravity(stage, asset.gravity)
-    incoming = kinematic_joints(asset)
+    static_paths = {body.path for body in asset.bodies if body.static}
+    # A disabled rigid body below an enabled one belongs to that ancestor.
+    # Keep independent static endpoints outside the joint's body hierarchy;
+    # USD joint relationships can still refer to both world-space bodies.
+    incoming = {
+        path: joint for path, joint in kinematic_joints(asset).items()
+        if path not in static_paths
+    }
     written: dict[str, str] = {}
     for body in root_bodies(asset, incoming):
         _emit_body(stage, body, None, "/World", asset, incoming, written)

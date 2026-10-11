@@ -23,6 +23,7 @@ from palatial_sim_file_converters.frame import (
     relative_pose,
     root_bodies,
     rpy_from_quat,
+    validate_static_joint_layout,
     world_pose,
 )
 from palatial_sim_file_converters.meshes import load_surface, write_obj
@@ -110,6 +111,7 @@ def write_urdf(asset: Asset, path: str | Path) -> Path:
 
 
 def _robot(asset: Asset, mesh_dir: Path | None) -> ET.Element:
+    validate_static_joint_layout(asset, "URDF")
     robot = ET.Element("robot", {"name": asset.name})
     incoming = kinematic_joints(asset)
     if _needs_world(asset, incoming):

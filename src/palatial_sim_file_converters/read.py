@@ -71,6 +71,7 @@ def asset_from_stage(stage, name: str) -> Asset:
 
 def _bodies(stage, cache, meters: float, kilograms: float, up_axis: str) -> list[Body]:
     bodies: list[Body] = []
+    enabled_paths: set[str] = set()
     used: set[str] = {"world"}
     for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
         if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
@@ -78,6 +79,12 @@ def _bodies(stage, cache, meters: float, kilograms: float, up_axis: str) -> list
         rigid_api = UsdPhysics.RigidBodyAPI(prim)
         enabled = rigid_api.GetRigidBodyEnabledAttr().Get()
         static = enabled is False
+        # A disabled nested API does not split its enabled ancestor's body.
+        # Its geometry must continue to move with that ancestor.
+        if static and _owner(prim, enabled_paths) is not None:
+            continue
+        if not static:
+            enabled_paths.add(str(prim.GetPath()))
         rigid, pos, quat = _rigid_pose(cache, prim, meters, up_axis)
         name = _unique(prim.GetName(), used)
         mass, com, inertia, axes = _mass(prim, cache, rigid, meters, kilograms, up_axis)
