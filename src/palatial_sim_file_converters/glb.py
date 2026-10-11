@@ -105,7 +105,7 @@ def write_glb(asset: Asset, path: str | Path) -> Path:
 
 
 def _surface(body):
-    shapes = list(body.visuals) or list(body.colliders)
+    shapes = list(body.visuals) or [shape for shape in body.colliders if shape.visible]
     if not shapes:
         return None, None
     points = []
@@ -165,6 +165,7 @@ def _manifest(asset: Asset, nodes: list[dict]) -> dict:
                 "diagonalInertia": list(body.diaginertia) if body.diaginertia else None,
                 "principalAxes": list(body.principal_quat) if body.principal_quat else None,
                 "kinematic": body.kinematic,
+                "static": body.static,
                 "translation": list(body.pos),
                 "rotation": list(body.quat),
                 "colliders": [
@@ -174,6 +175,7 @@ def _manifest(asset: Asset, nodes: list[dict]) -> dict:
                         "approximation": collider.approximation,
                         "size": list(collider.primitive_size) if collider.primitive_size else None,
                         "friction": list(collider.friction) if collider.friction else None,
+                        "visible": collider.visible,
                     }
                     for collider in body.colliders
                 ],

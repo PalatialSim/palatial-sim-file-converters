@@ -23,6 +23,7 @@ from palatial_sim_file_converters.frame import (
     relative_pose,
     root_bodies,
     rpy_from_quat,
+    validate_static_joint_layout,
     world_pose,
 )
 from palatial_sim_file_converters.meshes import load_surface, write_obj
@@ -110,6 +111,7 @@ def write_urdf(asset: Asset, path: str | Path) -> Path:
 
 
 def _robot(asset: Asset, mesh_dir: Path | None) -> ET.Element:
+    validate_static_joint_layout(asset, "URDF")
     robot = ET.Element("robot", {"name": asset.name})
     incoming = kinematic_joints(asset)
     if _needs_world(asset, incoming):
@@ -152,7 +154,7 @@ def _write_link(robot, body: Body, parent: Body | None, asset, incoming, mesh_di
     for index, collider in enumerate(body.colliders):
         _write_geometry(link, "collision", collider, body, index, mesh_dir, asset)
     joint = incoming.get(body.path)
-    if parent is None and (body.kinematic or (joint is not None and joint.kind == "fixed")):
+    if parent is None and (body.static or body.kinematic or (joint is not None and joint.kind == "fixed")):
         _write_fixed(robot, "world", body.name, body.pos, body.quat, f"{body.name}_world")
     elif joint is not None and parent is not None:
         _write_joint(robot, joint, parent, body, asset)
@@ -418,7 +420,7 @@ def _link_shape(element, body: Body, directory: Path | None, visual: bool) -> No
 def _needs_world(asset: Asset, incoming) -> bool:
     for body in root_bodies(asset, incoming):
         joint = incoming.get(body.path)
-        if body.kinematic or (joint is not None and joint.kind == "fixed"):
+        if body.static or body.kinematic or (joint is not None and joint.kind == "fixed"):
             return True
     return False
 

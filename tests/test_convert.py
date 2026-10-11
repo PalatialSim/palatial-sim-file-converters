@@ -13,6 +13,271 @@ from palatial_sim_file_converters.read import load_usda
 from palatial_sim_file_converters.urdf import parse_urdf, urdf_tree
 from palatial_sim_file_converters.usd_write import build_stage
 
+
+def test_static_supports_and_disabled_collisions_survive_usd_conversion():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    floor = UsdGeom.Cube.Define(stage, "/World/Floor")
+    floor.AddTranslateOp().Set((1, 2, -0.1))
+    floor.AddScaleOp().Set((4, 3, 0.1))
+    UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
+    support = UsdGeom.Xform.Define(stage, "/World/FixedSupport")
+    UsdPhysics.RigidBodyAPI.Apply(support.GetPrim()).CreateRigidBodyEnabledAttr(False)
+    UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, "/World/FixedSupport/Shape").GetPrim())
+    decoration = UsdGeom.Cube.Define(stage, "/World/Decoration")
+    UsdPhysics.CollisionAPI.Apply(decoration.GetPrim()).CreateCollisionEnabledAttr(False)
+    prop = UsdGeom.Xform.Define(stage, "/World/Prop")
+    prop.AddTranslateOp().Set((0, 0, 4))
+    UsdPhysics.RigidBodyAPI.Apply(prop.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(UsdGeom.Sphere.Define(stage, "/World/Prop/Shape").GetPrim())
+
+    asset = asset_from_stage(stage, "scene.usda")
+    bodies = {body.name: body for body in asset.bodies}
+    assert bodies["Floor"].static and not bodies["Floor"].kinematic
+    assert bodies["FixedSupport"].static
+    assert not bodies["Prop"].static
+    assert not bodies["Decoration"].colliders and len(bodies["Decoration"].visuals) == 1
+    assert np.allclose(bodies["Floor"].colliders[0].world_min, [-3, -1, -0.2])
+    root = mjcf_tree(asset)
+    assert root.find(".//body[@name='Floor']/freejoint") is None
+    assert root.find(".//body[@name='FixedSupport']/freejoint") is None
+    assert root.find(".//body[@name='Prop']/freejoint") is not None
+    assert root.find(".//body[@name='Decoration']/geom").get("contype") == "0"
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+    assert model.nv == 6
+    assert model.ngeom == 4
+
+    restored_stage = build_stage(asset)
+    restored = asset_from_stage(restored_stage, "restored.usda")
+    restored_bodies = {body.name: body for body in restored.bodies}
+    assert restored_bodies["Floor"].static
+    assert len(restored_bodies["FixedSupport"].colliders) == 1
+    assert not restored_bodies["Prop"].static
+    assert np.allclose(restored_bodies["Floor"].colliders[0].world_min, [-3, -1, -0.2])
+    robot = urdf_tree(asset)
+    fixed = robot.find("joint[@name='Floor_world']")
+    assert fixed is not None and fixed.get("type") == "fixed"
+    _, manifest = glb_document(asset)
+    assert next(body for body in manifest["bodies"] if body["name"] == "Floor")["static"] is True
+
+
+def test_repeated_usd_instances_keep_bodies_colliders_and_world_poses():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    stage.CreateClassPrim("/Template")
+    body = UsdGeom.Xform.Define(stage, "/Template/Body")
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, "/Template/Body/Shape").GetPrim())
+    for name, position in [("Left", (2, 0, 1)), ("Right", (-2, 0, 1))]:
+        instance = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        instance.GetPrim().GetReferences().AddInternalReference("/Template")
+        instance.GetPrim().SetInstanceable(True)
+        instance.AddTranslateOp().Set(position)
+
+    asset = asset_from_stage(stage, "instances.usda")
+    assert {body.path for body in asset.bodies} == {"/World/Left/Body", "/World/Right/Body"}
+    assert len({body.name for body in asset.bodies}) == 2
+    assert all(len(body.colliders) == 1 for body in asset.bodies)
+    assert sorted(body.pos for body in asset.bodies) == [(-2.0, 0.0, 1.0), (2.0, 0.0, 1.0)]
+    model = pytest.importorskip("mujoco").MjModel.from_xml_string(ET.tostring(mjcf_tree(asset), encoding="unicode"))
+    assert model.nv == 12 and model.ngeom == 2
+
+
+def test_converted_instance_supports_hold_dynamic_props_in_mujoco():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    mujoco = pytest.importorskip("mujoco")
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    physics = UsdPhysics.Scene.Define(stage, "/Physics")
+    physics.CreateGravityDirectionAttr((0, 0, -1))
+    physics.CreateGravityMagnitudeAttr(9.81)
+    stage.CreateClassPrim("/SupportTemplate")
+    shape = UsdGeom.Cube.Define(stage, "/SupportTemplate/Shape")
+    UsdPhysics.CollisionAPI.Apply(shape.GetPrim())
+    for name, position, scale in [
+        ("Floor", (0, 0, -0.05), (2, 2, 0.05)),
+        ("Table", (0, 0, 0.75), (0.4, 0.25, 0.02)),
+    ]:
+        support = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        support.GetPrim().GetReferences().AddInternalReference("/SupportTemplate")
+        support.GetPrim().SetInstanceable(True)
+        support.AddTranslateOp().Set(position)
+        support.AddScaleOp().Set(scale)
+    for name, x in [("TableProp", 0), ("FloorProp", 1)]:
+        prop = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        prop.AddTranslateOp().Set((x, 0, 1.1))
+        UsdPhysics.RigidBodyAPI.Apply(prop.GetPrim())
+        sphere = UsdGeom.Sphere.Define(stage, f"/World/{name}/Shape")
+        sphere.CreateRadiusAttr(0.03)
+        UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+
+    asset = asset_from_stage(stage, "support-fixture.usda")
+    xml = mjcf_tree(asset)
+    model = mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert model.nv == 12 and data.ncon == 0
+    by_path = {body.path: body for body in asset.bodies}
+    body_ids = {
+        path: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body.name)
+        for path, body in by_path.items()
+    }
+    settled_positions = []
+    for step in range(2000):
+        mujoco.mj_step(model, data)
+        if step >= 1750:
+            settled_positions.append(data.xpos.copy())
+    for prop, support, height in [
+        ("TableProp", "Table", 0.8), ("FloorProp", "Floor", 0.03),
+    ]:
+        prop_id = body_ids[f"/World/{prop}"]
+        support_id = body_ids[f"/World/{support}/Shape"]
+        assert data.xpos[prop_id, 2] == pytest.approx(height, abs=0.001)
+        assert np.ptp(np.array(settled_positions)[:, prop_id, 2]) < 1e-6
+        assert any(
+            {int(model.geom_bodyid[c.geom1]), int(model.geom_bodyid[c.geom2])}
+            == {prop_id, support_id}
+            for c in data.contact
+        )
+    assert np.isfinite(data.qpos).all() and np.max(np.abs(data.qvel)) < 1e-5
+    assert min(c.dist for c in data.contact) > -0.001
+
+    # Removing precisely the converted static supports must make both props fall.
+    world = xml.find("worldbody")
+    static_names = {body.name for body in asset.bodies if body.static}
+    for body in list(world):
+        if body.get("name") in static_names:
+            world.remove(body)
+    unsupported = mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
+    falling = mujoco.MjData(unsupported)
+    for _ in range(1000):
+        mujoco.mj_step(unsupported, falling)
+    assert all(falling.qpos[int(unsupported.jnt_qposadr[joint]) + 2] < -1
+               for joint in range(unsupported.njnt))
+    assert falling.ncon == 0
+
+
+def test_fixed_mjcf_geometry_round_trips_without_new_free_motion():
+    asset = parse_mjcf('<mujoco><worldbody><geom type="box" size="2 2 .1"/><body name="fixed"><geom type="sphere" size=".2"/></body></worldbody></mujoco>')
+    assert all(body.static and not body.kinematic for body in asset.bodies)
+    stage = build_stage(asset)
+    restored = load_usda(stage.GetRootLayer().ExportToString())
+    root = mjcf_tree(restored)
+    assert not root.findall(".//freejoint")
+    model = pytest.importorskip("mujoco").MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+    assert model.nv == 0 and model.ngeom == 2
+
+
+def test_disabled_nested_body_geometry_belongs_to_enabled_ancestor():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    for path, enabled in [
+        ("/World/Parent", True), ("/World/Parent/Disabled", False),
+        ("/World/Parent/Disabled/Nested", False),
+        ("/World/Parent/Disabled/Independent", True), ("/World/Fixed", False),
+    ]:
+        body = UsdGeom.Xform.Define(stage, path)
+        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim()).CreateRigidBodyEnabledAttr(enabled)
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, path + "/Shape").GetPrim())
+        if not enabled:
+            UsdPhysics.MassAPI.Apply(body.GetPrim()).CreateMassAttr(123)
+    asset = asset_from_stage(stage, "nested.usda")
+    bodies = {body.path: body for body in asset.bodies}
+    assert set(bodies) == {"/World/Parent", "/World/Parent/Disabled/Independent", "/World/Fixed"}
+    assert len(bodies["/World/Parent"].colliders) == 3
+    assert len(bodies["/World/Parent/Disabled/Independent"].colliders) == 1
+    assert bodies["/World/Fixed"].static
+    assert bodies["/World/Parent"].mass is None
+    model = pytest.importorskip("mujoco").MjModel.from_xml_string(ET.tostring(mjcf_tree(asset), encoding="unicode"))
+    assert model.nv == 12 and model.ngeom == 5
+    restored = asset_from_stage(build_stage(asset), "restored.usda")
+    assert sorted(len(body.colliders) for body in restored.bodies) == [1, 1, 3]
+
+
+@pytest.mark.parametrize("joint_type,parent_enabled", [("revolute", True), ("fixed", True), ("revolute", False)])
+def test_tree_targets_refuse_joint_layout_that_would_animate_static_support(joint_type, parent_enabled):
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    for name, enabled in [("Parent", parent_enabled), ("Support", False)]:
+        body = UsdGeom.Xform.Define(stage, f"/World/{name}")
+        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim()).CreateRigidBodyEnabledAttr(enabled)
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, f"/World/{name}/Shape").GetPrim())
+    joint_schema = UsdPhysics.RevoluteJoint if joint_type == "revolute" else UsdPhysics.FixedJoint
+    joint = joint_schema.Define(stage, "/World/Joint")
+    joint.CreateBody0Rel().SetTargets(["/World/Parent"])
+    joint.CreateBody1Rel().SetTargets(["/World/Support"])
+    asset = asset_from_stage(stage, "joint-fixture.usda")
+    assert next(body for body in asset.bodies if body.name == "Support").static
+    with pytest.raises(ValueError, match="would make static body Support move"):
+        mjcf_tree(asset)
+    with pytest.raises(ValueError, match="would make static body Support move in URDF"):
+        urdf_tree(asset)
+    # The unchanged source can still be carried into the USD target.
+    restored = asset_from_stage(build_stage(asset), "restored.usda")
+    assert next(body for body in restored.bodies if body.name == "Support").static
+    assert len(restored.joints) == 1
+
+
+def test_visual_visibility_is_inherited_without_disabling_physical_colliders():
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from palatial_sim_file_converters.read import asset_from_stage
+
+    stage = Usd.Stage.CreateInMemory()
+    for path, setting in [("/World/Hidden", "visibility"), ("/World/Guides", "purpose")]:
+        parent = UsdGeom.Xform.Define(stage, path)
+        if setting == "visibility":
+            parent.CreateVisibilityAttr("invisible")
+        else:
+            parent.CreatePurposeAttr("guide")
+        UsdGeom.Cube.Define(stage, path + "/Helper")
+        collider = UsdGeom.Cube.Define(stage, path + "/PhysicalShape")
+        UsdPhysics.CollisionAPI.Apply(collider.GetPrim())
+    direct_body = UsdGeom.Cube.Define(stage, "/World/DirectBody")
+    UsdPhysics.RigidBodyAPI.Apply(direct_body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(direct_body.GetPrim())
+    asset = asset_from_stage(stage, "scene.usda")
+    assert {body.path for body in asset.bodies} == {"/World/DirectBody", "/World/Hidden/PhysicalShape", "/World/Guides/PhysicalShape"}
+    assert all(len(body.colliders) == 1 and not body.visuals for body in asset.bodies)
+    assert next(body for body in asset.bodies if body.path == "/World/DirectBody").static is False
+    hidden = [body for body in asset.bodies if body.static]
+    assert all(body.colliders[0].visible is False for body in hidden)
+    xml = mjcf_tree(asset)
+    for body in hidden:
+        geom = xml.find(f".//body[@name='{body.name}']/geom")
+        assert geom.get("group") == "3" and geom.get("rgba") == "0 0 0 0"
+        assert geom.get("contype") != "0"
+    restored_stage = build_stage(asset)
+    restored = asset_from_stage(restored_stage, "restored.usda")
+    assert all(not body.colliders[0].visible for body in restored.bodies if body.static)
+    payload, manifest = glb_document(asset)
+    length = struct.unpack_from("<I", payload, 12)[0]
+    import json
+    document = json.loads(payload[20:20 + length])
+    assert all("mesh" not in node for node in document["nodes"] if node["name"] in {body.name for body in hidden})
+    assert all(not body["colliders"][0]["visible"] for body in manifest["bodies"] if body["static"])
+    mjcf_restored = parse_mjcf(ET.tostring(xml, encoding="unicode"))
+    assert all(not body.colliders[0].visible for body in mjcf_restored.bodies if body.static)
+
 MJCF = """<mujoco model="sample">
   <compiler angle="radian"/>
   <option gravity="0 0 -9.81"/>

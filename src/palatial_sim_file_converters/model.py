@@ -25,6 +25,7 @@ class Collider:
     world_min: np.ndarray
     world_max: np.ndarray
     friction: tuple[float, float, float] | None
+    visible: bool = True
     local_points: np.ndarray | None = None
     faces: np.ndarray | None = None
     primitive_pos: tuple[float, float, float] | None = None
@@ -59,6 +60,7 @@ class Body:
     kinematic: bool
     colliders: list[Collider] = field(default_factory=list)
     visuals: list[Visual] = field(default_factory=list)
+    static: bool = False
 
 
 @dataclass

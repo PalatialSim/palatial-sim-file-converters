@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Preserve static scene supports and visual geometry in USD conversion, traverse referenced instance contents, and keep fixed world geometry distinct from kinematic bodies through USD, MJCF, URDF and GLB output.
+
+Verify converted referenced floor/table supports with a local MuJoCo drop-and-settle regression and a missing-support control.
+
+Keep geometry below disabled nested rigid-body APIs attached to its nearest enabled ancestor.
+
+Keep independent static joint endpoints outside enabled rigid-body hierarchies in USD. Refuse MJCF and URDF joint layouts that would animate an authored static child instead of silently changing its physical role.
+
 ## 0.2.2 — 2026-09-22
 
 Record the builds this release was checked against: MuJoCo 3.13.0 and OpenUSD 26.08 (`usd-core` 26.8).
