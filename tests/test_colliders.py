@@ -135,3 +135,38 @@ def test_collider_scale_is_baked_and_flagged():
     collider = next(body for body in asset.bodies if body.name == "Lid").colliders[0]
     extent = collider.local_points.max(axis=0) - collider.local_points.min(axis=0)
     assert np.allclose(extent, [0.072, 0.072, 0.072], atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("shape", "fields", "apis"),
+    (
+        ("Cube", "double size = 1", '"PhysicsCollisionAPI"'),
+        (
+            "Mesh",
+            CUBES + """
+                uniform token physics:approximation = "boundingCube"
+                point3f[] points = [(-0.5, -0.5, -0.5), (0.5, -0.5, -0.5),
+                    (0.5, 0.5, -0.5), (-0.5, 0.5, -0.5), (-0.5, -0.5, 0.5),
+                    (0.5, -0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, 0.5)]
+            """,
+            '"PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"',
+        ),
+    ),
+)
+def test_sloped_box_collider_preserves_usd_rotation(shape, fields, apis):
+    stage = f"""#usda 1.0
+    (metersPerUnit = 1
+     upAxis = "Z")
+    def Xform "Chassis" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{
+        def {shape} "Chute" (prepend apiSchemas = [{apis}]) {{
+            float xformOp:rotateX = -30
+            float3 xformOp:scale = (0.68, 0.36, 0.014)
+            uniform token[] xformOpOrder = ["xformOp:rotateX", "xformOp:scale"]
+            {fields}
+        }}
+    }}
+    """
+    mjcf = mjcf_tree(load_usda(stage))
+    collider = next(geom for geom in mjcf.findall(".//geom") if geom.get("type") == "box")
+    quat = [float(value) for value in collider.get("quat").split()]
+    assert np.allclose(quat, [np.cos(np.pi / 12), -np.sin(np.pi / 12), 0, 0])
