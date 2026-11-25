@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Preserve USD rotations for scaled primitive colliders, including sloped chute boxes.
+
 Preserve static scene supports and visual geometry in USD conversion, traverse referenced instance contents, and keep fixed world geometry distinct from kinematic bodies through USD, MJCF, URDF and GLB output.
 
 Verify converted referenced floor/table supports with a local MuJoCo drop-and-settle regression and a missing-support control.

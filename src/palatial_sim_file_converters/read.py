@@ -277,7 +277,7 @@ def _scaled_primitive(to_body: np.ndarray, center: np.ndarray, half: np.ndarray)
     linear = to_body[:3, :3]
     scale = np.abs(np.linalg.norm(linear, axis=1))
     pos = transform_points(to_body, center.reshape(1, 3))[0]
-    quat = matrix_to_quat(_orthonormalize(linear))
+    quat = matrix_to_quat(_rotation_of(to_body).T)
     size = np.abs(half) * scale
     return (
         (float(pos[0]), float(pos[1]), float(pos[2])),
@@ -296,7 +296,7 @@ def _primitive(prim, to_body: np.ndarray):
     linear = to_body[:3, :3]
     # Row-vector matrices store each local axis scale on a row.
     axis_scale = np.abs(np.linalg.norm(linear, axis=1))
-    quat = matrix_to_quat(_orthonormalize(linear))
+    quat = matrix_to_quat(_rotation_of(to_body).T)
     pos = tuple(float(value) for value in to_body[3, :3])
     if kind == "Sphere":
         radius = float(UsdGeom.Sphere(prim).GetRadiusAttr().Get() or 1.0)
@@ -792,23 +792,6 @@ def _rotation_of(matrix: np.ndarray) -> np.ndarray:
     if np.linalg.det(left @ right) < 0.0:
         left[:, -1] *= -1.0
     rotation = left @ right
-    return rotation
-
-
-def _orthonormalize(linear: np.ndarray) -> np.ndarray:
-    gf = Gf.Matrix4d(
-        float(linear[0, 0]), float(linear[0, 1]), float(linear[0, 2]), 0.0,
-        float(linear[1, 0]), float(linear[1, 1]), float(linear[1, 2]), 0.0,
-        float(linear[2, 0]), float(linear[2, 1]), float(linear[2, 2]), 0.0,
-        0.0, 0.0, 0.0, 1.0,
-    )
-    extracted = gf.ExtractRotationMatrix()
-    rotation = np.array(
-        [[extracted[row][col] for col in range(3)] for row in range(3)],
-        dtype=np.float64,
-    )
-    if np.linalg.det(rotation) < 0.0:
-        rotation[:, 0] *= -1.0
     return rotation
 
 
